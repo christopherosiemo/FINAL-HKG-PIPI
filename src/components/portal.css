@@ -1153,8 +1153,11 @@
 }
 .ws-aws-columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 30px;
+}
+.ws-aws-columns > * {
+  min-width: 0;
 }
 .ws-aws-columns > div {
   padding-right: 25px;
@@ -1726,7 +1729,7 @@
     padding: 20px 25px;
   }
   .ws-aws-columns {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .ws-aws-columns > div {
     border: 0;

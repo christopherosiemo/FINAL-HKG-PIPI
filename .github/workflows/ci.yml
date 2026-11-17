@@ -52,6 +52,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+        id: build
       - run: npm audit --audit-level=moderate
       - run: npx playwright install --with-deps chromium
       - run: npm run dev > /tmp/hkgpipi.log 2>&1 &
@@ -65,6 +66,7 @@ jobs:
       - run: RUN_INTEGRATION_TESTS=true npm test
       - run: npx playwright test
       - name: Audit production performance and accessibility
+        if: ${{ !cancelled() && steps.build.conclusion == 'success' }}
         env:
           PAYMENTS_PROVIDER: stripe
           LEGAL_APPROVED: 'false'

@@ -58,6 +58,31 @@ let opportunity: EntityRecord,
   remediation: EntityRecord,
   deployment: EntityRecord,
   verification: EntityRecord;
+it('preserves outcome billing uniqueness in immutable order history after proposal archival or refund', async () => {
+  const originalId = randomUUID();
+  const snapshot = {
+    proposalSnapshot: { parentProposalId: randomUUID(), verificationId: randomUUID() },
+  };
+  const insert = (id: string) =>
+    sql(
+      "INSERT INTO orders(id,organisation_id,email,company,name,amount,offer,checkout_key,terms_version,legal_snapshot,tax_snapshot,provider,status) VALUES($1,$2,'outcome@domain.test','Fixture company','Fixture',100,'outcome',$3,'fixture',$4,'{}','test','paid')",
+      [id, ids.org, randomUUID(), snapshot],
+    );
+  try {
+    await insert(originalId);
+    await expect(insert(randomUUID())).rejects.toMatchObject({
+      code: '23505',
+      constraint: 'outcome_order_evidence_unique',
+    });
+    await sql("UPDATE orders SET status='refunded' WHERE id=$1", [originalId]);
+    await expect(insert(randomUUID())).rejects.toMatchObject({
+      code: '23505',
+      constraint: 'outcome_order_evidence_unique',
+    });
+  } finally {
+    await sql('DELETE FROM orders WHERE id=$1', [originalId]);
+  }
+});
 it('binds a single-use team invitation to its recipient and retains company ownership', async () => {
   const [recipient] = await sql<{ email: string }>('SELECT email FROM "user" WHERE id=$1', [
     ids.other,

@@ -85,7 +85,7 @@ export async function POST(request: Request) {
       }
       // Read the provider's current financial state so out-of-order refund/dispute
       // events cannot restore stale paid/refunded statuses.
-      await recordFinancialUpdate(event.id, event.type, pi, await financialState(pi));
+      await recordFinancialUpdate(event.id, event.type, pi, () => financialState(pi));
     }
     return Response.json({ received: true });
   } catch (error) {

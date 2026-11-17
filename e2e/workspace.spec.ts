@@ -46,10 +46,13 @@ test('complete illustrative portals remain read-only, responsive and accessible'
     ]) {
       await page.goto(route);
       await expect(page.locator('h1')).toBeVisible();
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
-        `${width}px ${route} document overflow`,
-      ).toBe(true);
+      await page.evaluate(() => document.fonts.ready);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), {
+          message: `${width}px ${route} document overflow`,
+          timeout: 3000,
+        })
+        .toBe(true);
       const audit = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
         .analyze();

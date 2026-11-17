@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+let fixtureClient = 1;
+test.beforeEach(async ({ page }) => {
+  // Distinct synthetic clients keep cumulative checkout rate limits meaningful
+  // when HTTP integration and browser journeys run back-to-back in fresh CI.
+  await page.setExtraHTTPHeaders({ 'x-forwarded-for': `198.51.100.${fixtureClient++}` });
+});
 const routes = [
   '/',
   '/method',

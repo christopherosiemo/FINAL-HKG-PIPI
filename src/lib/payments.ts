@@ -455,7 +455,7 @@ export async function recordFinancialUpdate(
   eventId: string,
   eventType: string,
   paymentId: string,
-  update: PaymentFinancialUpdate,
+  update: PaymentFinancialUpdate | (() => Promise<PaymentFinancialUpdate>),
 ) {
   return transaction(async (client) => {
     const { rows } = await client.query<{ id: string; organisation_id: string | null }>(
@@ -465,22 +465,30 @@ export async function recordFinancialUpdate(
     const order = rows[0];
     if (!order) throw new Error('Payment order has not been fulfilled yet. Retry required.');
     const inserted = await client.query(
-      'INSERT INTO payment_events(id,type,order_id,detail,processed_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT DO NOTHING RETURNING id',
-      [eventId, eventType, order.id, JSON.stringify(update)],
+      'INSERT INTO payment_events(id,type,order_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id',
+      [eventId, eventType, order.id],
     );
     if (!inserted.rowCount) return false;
+    // Read the authoritative provider state only after acquiring the order lock.
+    // Webhooks and reconciliation can otherwise fetch in one order and commit
+    // in the opposite order, overwriting a newer refund/dispute snapshot.
+    const current = typeof update === 'function' ? await update() : update;
     await client.query(
       'UPDATE orders SET status=$2,billing=billing || $3::jsonb,receipt_url=COALESCE($4,receipt_url),updated_at=now() WHERE id=$1',
-      [order.id, update.status, JSON.stringify(update), update.receiptUrl || null],
+      [order.id, current.status, JSON.stringify(current), current.receiptUrl || null],
     );
+    await client.query('UPDATE payment_events SET detail=$2,processed_at=now() WHERE id=$1', [
+      eventId,
+      JSON.stringify(current),
+    ]);
     await client.query(
       "INSERT INTO audit_events(id,organisation_id,actor_id,action,entity_id,detail) VALUES($1,$2,'payment-provider',$3,$4,$5)",
       [
         randomUUID(),
         order.organisation_id,
-        `payment.${update.status}`,
+        `payment.${current.status}`,
         order.id,
-        JSON.stringify({ eventId, ...update }),
+        JSON.stringify({ eventId, ...current }),
       ],
     );
     return true;
@@ -557,12 +565,11 @@ export async function reconcilePayments(orderId?: string, actorId = 'worker') {
           paymentId,
           { ...(await validatedStripeAmount(session, order)), provider: 'stripe' },
         );
-        const state = await financialState(paymentId);
         await recordFinancialUpdate(
           `reconcile-state-${randomUUID()}`,
           'reconciliation.financial_state',
           paymentId,
-          state,
+          () => financialState(paymentId),
         );
       } else if (session.status === 'expired')
         await sql(
