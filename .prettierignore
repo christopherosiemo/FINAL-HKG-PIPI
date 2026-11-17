@@ -1,0 +1,14 @@
+node_modules
+.next
+next-env.d.ts
+.git
+.env*
+.local
+.data
+work
+infra/.terraform
+*.tfstate*
+package-lock.json
+test-results
+playwright-report
+public
