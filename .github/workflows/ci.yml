@@ -1,0 +1,96 @@
+name: Product verification
+on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: product-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hkgpipi
+          POSTGRES_PASSWORD: hkgpipi
+          POSTGRES_DB: hkgpipi
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hkgpipi"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+      mailpit:
+        image: ghcr.io/axllent/mailpit:latest
+        ports: ['1025:1025', '8025:8025']
+    env:
+      DATABASE_URL: postgresql://hkgpipi:hkgpipi@127.0.0.1:55432/hkgpipi
+      BETTER_AUTH_URL: http://127.0.0.1:3001
+      BETTER_AUTH_SECRET: ci-only-secret-do-not-use-in-production-40characters
+      PAYMENTS_PROVIDER: test
+      ENABLE_TEST_PAYMENTS: 'true'
+      LEGAL_APPROVED: 'true'
+      LEGAL_TERMS_VERSION: local-fixture-v1
+      LEGAL_TERMS_URL: http://127.0.0.1:3001/terms
+      LEGAL_PRIVACY_URL: http://127.0.0.1:3001/privacy
+      SELLER_LEGAL_NAME: CI TEST FIXTURE
+      SELLER_ADDRESS: CI fixture only
+      TAX_APPROVED: 'true'
+      TAX_MODE: exempt
+      TAX_LABEL: Test fixture
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: '1025'
+      MAIL_FROM: HKGpipi <local@hkgpipi.test>
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        id: build
+      - run: npm audit --audit-level=moderate
+      - run: npx playwright install --with-deps chromium
+      - run: npm run dev > /tmp/hkgpipi.log 2>&1 &
+      - run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3001/api/health; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/hkgpipi.log
+          exit 1
+      - run: RUN_INTEGRATION_TESTS=true npm test
+      - run: npx playwright test
+      - name: Audit production performance and accessibility
+        if: ${{ !cancelled() && steps.build.conclusion == 'success' }}
+        env:
+          PAYMENTS_PROVIDER: stripe
+          LEGAL_APPROVED: 'false'
+          TAX_APPROVED: 'false'
+          BETTER_AUTH_URL: https://hkgpipi.com
+        run: |
+          mkdir -p work
+          npm run start -- --port 3002 > /tmp/hkgpipi-production.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3002/ > /dev/null; then break; fi
+            sleep 2
+          done
+          npx --yes --package=lighthouse@13.6.0 lighthouse http://127.0.0.1:3002 --chrome-flags='--headless --no-sandbox --disable-dev-shm-usage' --only-categories=performance,accessibility,best-practices,seo --output=json --output-path=work/lighthouse-production.json --quiet
+          node -e "const r=require('./work/lighthouse-production.json'); const s=Object.fromEntries(Object.entries(r.categories).map(([k,v])=>[k,v.score])); console.log(s); if(s.performance<0.9 || s.accessibility<0.95) process.exit(1);"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-performance-audit
+          path: work/lighthouse-production.json
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-evidence
+          path: |
+            playwright-report
+            test-results
